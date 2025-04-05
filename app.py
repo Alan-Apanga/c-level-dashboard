@@ -28,7 +28,7 @@ alt.themes.enable("dark")
 
 #%%
 
-path = 'C:/Users/alann/Documents/Interviews/BayWare r.e/case_study/data/*.csv'
+path = './data/*.csv'
 csv_files = glob.glob(path)
 dfs = [pd.read_csv(file) for file in csv_files]
 

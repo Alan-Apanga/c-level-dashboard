@@ -495,7 +495,7 @@ with col[0]:
         total_display = '-'
 
     
-    st.metric(label="Tota Revenue", value=total_display, delta=None )
+    st.metric(label="Total Revenue", value=total_display, delta=None )
 
 
 
@@ -628,9 +628,11 @@ with col[2]:
                      )} 
                  )
 
+    st.markdown("<h4 style='text-align: center;'><u>More Information</u></h4>", unsafe_allow_html=True)
+    
     with st.expander('About', expanded=True):
         st.write('''
-            - Data Source: Sales and product data merged based on `itemGuid`.
+            - Data: Sales and product data merged based on `Product Key`.
             - :orange[**Top Products**]: Displays the **top 10 best-selling products per category** for the selected year.
             - :orange[**Sales Performance**]: Measured in **total sales amount** per product.
             - :orange[**Filtering**]: Data is filtered for the **selected year**.

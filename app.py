@@ -339,38 +339,60 @@ def plot_gross_margin(df):
 @st.cache_data
 def plot_revenue_trend(df, selected_year):
     """
-    Filters sales orders data for the selected year and plots revenue trend using Altair.
+    Filters sales orders data for the selected and previous year (if available),
+    and plots revenue trend(s) using Altair.
 
     Args:
         df (pd.DataFrame): DataFrame containing sales orders with 'tranDate' and 'amount'.
         selected_year (int): Year to filter data.
 
     Returns:
-        alt.Chart: Altair line chart showing revenue trend over time.
+        alt.Chart: Altair line chart showing revenue trend(s).
     """
-    
+
     # Ensure 'tranDate' is in datetime format
     df['tranDate'] = pd.to_datetime(df['tranDate'])
-    
-    # Filter data by selected year
-    df_filtered = df[df['tranDate'].dt.year == selected_year]
-    
-    # Aggregate revenue per day
-    revenue_df = df_filtered.groupby('tranDate')['amount'].sum().reset_index()
-    
-    # Create Altair line chart
-    line_chart = (
+
+    # Get all years available in the data
+    available_years = df['tranDate'].dt.year.unique()
+
+    # Always filter for selected year
+    years_to_plot = [selected_year]
+
+    # Only include previous year if it exists in data
+    if selected_year - 1 in available_years:
+        years_to_plot.insert(0, selected_year - 1)
+
+    # Filter data
+    df_filtered = df[df['tranDate'].dt.year.isin(years_to_plot)].copy()
+    df_filtered['year'] = df_filtered['tranDate'].dt.year
+
+    # Normalize the x-axis date to same year for comparison (month and day only)
+    df_filtered['month_day'] = df_filtered['tranDate'].dt.strftime('%m-%d')
+    df_filtered['plot_date'] = pd.to_datetime(f"{selected_year}-" + df_filtered['month_day'], errors='coerce')
+
+    # Group by normalized date and year
+    revenue_df = df_filtered.groupby(['plot_date', 'year'])['amount'].sum().reset_index()
+
+    # Altair chart
+    chart = (
         alt.Chart(revenue_df)
-        .mark_line(point=True)  # Add points to highlight each day's revenue
+        .mark_line(point=True)
         .encode(
-            x=alt.X('tranDate:T', title='Date', axis=alt.Axis(format='%b %d, %Y', labelAngle=-45)),  # Format x-axis
-            y=alt.Y('amount:Q', title='Revenue', scale=alt.Scale(zero=False)),  # Prevent unnecessary zero baseline
-            tooltip=['tranDate', 'amount']  # Interactive tooltip
+            x=alt.X('plot_date:T', title='Date', axis=alt.Axis(format='%b %d', labelAngle=-45)),
+            y=alt.Y('amount:Q', title='Revenue'),
+            color=alt.Color('year:N', title='Year'),
+            tooltip=['year', 'plot_date', 'amount']
         )
-        .properties(title='', width=600, height=400)
+        .properties(
+            title=f'Revenue Trend for {selected_year}' + (f" vs {selected_year - 1}" if len(years_to_plot) > 1 else ''),
+            width=700,
+            height=400
+        )
     )
 
-    return line_chart
+    return chart
+
 
         
 

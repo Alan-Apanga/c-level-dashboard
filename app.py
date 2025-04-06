@@ -29,18 +29,19 @@ alt.themes.enable("dark")
 #%%
 
 path = './data/*.csv'
-csv_files = glob.glob(path)
+csv_files = sorted(glob.glob(path))  
 dfs = [pd.read_csv(file) for file in csv_files]
 
 #                       store A
-# df_inventory = dfs[0]
-# df_items = dfs[1]
-# df_purchase_orders = dfs[2]
-# df_sales_orders = dfs[3]
+df_inventory = dfs[0]
+df_items = dfs[1]
+df_purchase_orders = dfs[2]
+df_sales_orders = dfs[3]
 
 
-# # Convert 'tranDate' to datetime format
-# df_sales_orders['tranDate'] = pd.to_datetime(df_sales_orders['tranDate'], errors='coerce')
+# Convert 'tranDate' to datetime format
+df_sales_orders['tranDate'] = pd.to_datetime(df_sales_orders['tranDate'], errors='coerce')
+#print("CSV files found:", csv_files)
 
 
 #%%

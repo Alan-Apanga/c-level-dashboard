@@ -231,12 +231,17 @@ def get_order_fulfillment(df_purchase, year):
     # Create a copy to avoid modifying the original DataFrame
     df_filtered = df_purchase.copy()
     
+    # Ensure 'tranDate' is in datetime format (only in df_filtered, not modifying original)
+    df_filtered['tranDate'] = pd.to_datetime(df_filtered['tranDate'], errors='coerce')
+    
+    # Filter for the given year
+    df_filtered = df_filtered[df_filtered['tranDate'].dt.year == year]
+
+    
     columns = ['guid', 'itemGuid', 'tranDate', 'qtyOrdered', 'qtyReceived']
     df_filtered = df_filtered[columns].copy()
     
-    # Ensure 'tranDate' is in datetime format (only in df_filtered, not modifying original)
-    df_filtered['tranDate'] = pd.to_datetime(df_filtered['tranDate'], errors='coerce')
-
+    
     # Replace zero qtyOrdered to avoid division errors
     df_filtered['qtyOrdered'] = df_filtered['qtyOrdered'].replace(0, np.nan)
 
@@ -246,8 +251,7 @@ def get_order_fulfillment(df_purchase, year):
     # Drop NaN values caused by division errors (optional but recommended)
     df_filtered = df_filtered.dropna(subset=['Fulfillment Rate'])
 
-    # Filter for the given year
-    df_filtered = df_filtered[df_filtered['tranDate'].dt.year == year]
+    
 
     # Count fulfilled and pending orders
     fulfilled_orders = df_filtered[df_filtered['Fulfillment Rate'] == 100].shape[0]

@@ -235,7 +235,7 @@ def get_order_fulfillment(df_purchase, year):
     df_filtered = df_filtered[columns].copy()
     
     # Ensure 'tranDate' is in datetime format (only in df_filtered, not modifying original)
-    df_filtered['tranDate'] = pd.to_datetime(df_filtered['tranDate'])
+    df_filtered['tranDate'] = pd.to_datetime(df_filtered['tranDate'], errors='coerce')
 
     # Replace zero qtyOrdered to avoid division errors
     df_filtered['qtyOrdered'] = df_filtered['qtyOrdered'].replace(0, np.nan)

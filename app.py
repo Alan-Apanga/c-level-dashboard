@@ -105,11 +105,18 @@ with st.sidebar:
 
 
 def format_number(num):
-    if num > 1000000:
-        if not num % 1000000:
-            return f'{num // 1000000} M'
-        return f'{round(num / 1000000, 1)} M'
-    return f'{num // 1000} K'
+    abs_num = abs(num)  # Handle negative numbers properly
+
+    if abs_num >= 1_000_000_000:
+        formatted = f'{round(num / 1_000_000_000, 1)} B'
+    elif abs_num >= 1_000_000:
+        formatted = f'{round(num / 1_000_000, 1)} M'
+    elif abs_num >= 1_000:
+        formatted = f'{round(num / 1_000, 1)} K'
+    else:
+        formatted = str(num)  # Show small numbers as-is
+
+    return formatted
 
 
 

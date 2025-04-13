@@ -10,6 +10,8 @@ import numpy as np
 import glob
 import streamlit as st
 import altair as alt
+from datetime import timedelta, datetime
+import io
 
 
 
@@ -28,155 +30,251 @@ alt.themes.enable("dark")
 
 #%%
 
-path = './data/*.csv'
-csv_files = sorted(glob.glob(path))  
-dfs = [pd.read_csv(file) for file in csv_files]
-
-#                       store A
-df_inventory = dfs[0]
-df_items = dfs[1]
-df_purchase_orders = dfs[2]
-df_sales_orders = dfs[3]
-
-
-# Convert 'tranDate' to datetime format
-df_sales_orders['tranDate'] = pd.to_datetime(df_sales_orders['tranDate'], errors='coerce')
-#print("CSV files found:", csv_files)
-
-
+@st.cache_data
+def load_data():
+    path = './data/*.csv'
+    csv_files = sorted(glob.glob(path))  
+    dfs = [pd.read_csv(file) for file in csv_files]
+    
+    return dfs
+    
 #%%
 
 
+# Set up input widgets
+st.logo(
+        image="./images/baywa-ag-seeklogo.png",
+        icon_image="./images/baywa-seeklogo.png"
+)
 
-with st.sidebar:
-    st.title('💻 C-Level Dashboard')
-    
-    
-    # Store selection
-    store_list = ['A', 'G', 'J']
-    selected_store = st.selectbox('Select a store', store_list)
-    
-    
-    # Load DataFrames based on store selection
-    if selected_store == 'A':
-        df_inventory = dfs[0]
-        df_items = dfs[1]
-        df_purchase_orders = dfs[2]
-        df_sales_orders = dfs[3]
-    elif selected_store == 'G':
-        df_inventory = dfs[4]
-        df_items = dfs[5]
-        df_purchase_orders = dfs[6]
-        df_sales_orders = dfs[7]
-    elif selected_store == 'J':
-        df_inventory = dfs[8]
-        df_items = dfs[9]
-        df_purchase_orders = dfs[10]
-        df_sales_orders = dfs[11]
-    
-    
-    
-    # Convert tranDate column to datetime format for filtering
-    df_sales_orders['tranDate'] = pd.to_datetime(df_sales_orders['tranDate'], errors='coerce')
-    
-    
-    
-    year_list = sorted(df_sales_orders['tranDate'].dt.year.dropna().unique(), reverse=True)
 
-    # Year selection
-    selected_year = st.selectbox('Select a year', year_list, index=len(year_list)-1)
-    
-    
-    
-    
-    # Filter sales orders for the selected year
-    df_selected = df_sales_orders[df_sales_orders['tranDate'].dt.year == selected_year]
-    
-    
-    
-    # Sort the filtered dataframe by 'tranDate'
-    df_selected_sorted = df_selected.sort_values(by="tranDate", ascending=False)
-    
+#                   Data Loading & Organization
+dfs = load_data()
 
+# df_inventory = dfs[0]
+# df_items = dfs[1]
+# df_purchase_orders = dfs[2]
+# df_sales_orders = dfs[3]
+
+
+# df_sales_orders.info()
+
+# Store mapping: Store A: 0,1,2,3; Store G: 4,5,6,7; Store J: 8,9,10,11
+store_map = {'A': (0,1,2,3), 'G': (4,5,6,7), 'J': (8,9,10,11)}
     
 
 #%%
 
-
+#                       HELPER METHODS
 
 def format_number(num):
-    abs_num = abs(num)  # Handle negative numbers properly
-
+    """Format numbers with K, M, or B."""
+    abs_num = abs(num)
     if abs_num >= 1_000_000_000:
-        formatted = f'{round(num / 1_000_000_000, 1)} B'
+        return f"{num/1_000_000_000:.1f} B"
     elif abs_num >= 1_000_000:
-        formatted = f'{round(num / 1_000_000, 1)} M'
+        return f"{num/1_000_000:.1f} M"
     elif abs_num >= 1_000:
-        formatted = f'{round(num / 1_000, 1)} K'
+        return f"{num/1_000:.1f} K"
     else:
-        formatted = str(num)  # Show small numbers as-is
+        return str(num)
+    
 
-    return formatted
+#%%
+    
+#                        Retrieve data for selected store(s)
+    
+    
+def get_store_data(dfs, store):
+    
+    if store == "All":
+        
+        # Combine each type of file across all stores
+        inv_dfs = [dfs[store_map[s][0]] for s in store_map]
+        prod_dfs = [dfs[store_map[s][1]] for s in store_map]
+        pur_dfs = [dfs[store_map[s][2]] for s in store_map]
+        sales_dfs = [dfs[store_map[s][3]] for s in store_map]
+        
+        
+        # Combines a list of DataFrames (here called inv_dfs) into a single DataFrame, 
+        # stacking them vertically (row-wise) by default
+        df_inventory = pd.concat(inv_dfs, ignore_index=True)
+        df_products = pd.concat(prod_dfs, ignore_index=True)
+        df_purchase = pd.concat(pur_dfs, ignore_index=True)
+        df_sales = pd.concat(sales_dfs, ignore_index=True)
+    
+    else:
+        idx0, idx1, idx2, idx3 = store_map[store]
+        df_inventory = dfs[idx0]
+        df_products = dfs[idx1]
+        df_purchase = dfs[idx2]
+        df_sales = dfs[idx3]
+    
+    return df_inventory, df_products, df_purchase, df_sales
+    
+#%%
+
+@st.cache_data
+def filter_sales(df, start, end):
+    df = df.copy()
+    df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
+    return df[(df['tranDate'] >= start) & (df['tranDate'] <= end)]  
 
 
 
+#%%
+
+def compute_delta(df, column):
+    # Ensure at least two records exist
+    if len(df) < 2:
+        return 0, 0
+    cur_val = df[column].iloc[-1]
+    prev_val = df[column].iloc[-2]
+    delta = cur_val - prev_val
+    delta_pct = (delta / prev_val) * 100 if prev_val != 0 else 0
+    return delta, delta_pct
 
 
+#%%
 
-def calculate_inventory_turnover(df_sales, df_inventory, selected_year):
+# Data aggregation based on time frame
+def aggregate_timeframe(df, freq):
+    """ 
+    freq can be a pandas offset alias like:
+
+    'D' – daily
+    
+    'W' – weekly
+    
+    'M' – monthly
+    
+    'Q' – quarterly
+    
+    'Y' – yearly
     """
-    Calculate the inventory turnover ratio for the selected year.
+    
+    df = df.copy()
+    df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
+    # When using altair charts you may prefer to have the date as the index
+    df = df.set_index('tranDate')
+    return df.resample(freq).sum(numeric_only=True) # groups data based on freq datetime index.
 
-    Parameters:
-    - df_sales_sorted: Sales orders DataFrame (not yet filtered by year and store).
-    - df_inventory: Inventory DataFrame.
-    - selected_year: The year selected from the sidebar.
+
+def get_daily_data(df):
+    return df.set_index('tranDate')
+
+def get_weekly_data(df):
+    return aggregate_timeframe(df, 'W-MON')
+
+def get_monthly_data(df):
+    return aggregate_timeframe(df, 'M')
+
+def get_quarterly_data(df):
+    return aggregate_timeframe(df, 'Q')
+
+
+#%%
+
+#               KPI calculations
+
+def calculate_total_revenue(df):
+    return df['amount'].sum()
+
+
+def calculate_inventory_turnover(sales_df, inventory_df):
+    if 'COGS' not in sales_df.columns:
+        # Merge to compute COGS if not already in the dataframe
+        sales_merged = sales_df.merge(inventory_df[['itemGuid', 'averageCost']], on='itemGuid', how='left')
+        sales_merged['COGS'] = sales_merged['qtyBilled'].abs() * sales_merged['averageCost']
+    else:
+        sales_merged = sales_df
+    total_COGS = sales_merged['COGS'].sum()
+    avg_inventory = inventory_df['quantityOnHand'].mean()
+    return total_COGS/avg_inventory if avg_inventory > 0 else np.nan
+
+
+def process_gross_margin(sales_df, inventory_df):
+    df = sales_df.copy()
+
+    # Merge cost info
+    df = df.merge(inventory_df[['itemGuid', 'averageCost']], on='itemGuid', how='left')
+
+    # Calculate COGS and Gross Profit
+    df['COGS'] = df['qtyBilled'].abs() * df['averageCost']
+    df['Gross Profit'] = df['amount'] - df['COGS']
+
+    # Avoid divide-by-zero
+    total_revenue = df['amount'].sum()
+    if abs(total_revenue) < 1e-6:
+        return 0.0  # or np.nan depending on how you want to handle zero revenue
+
+    # Weighted Gross Margin (%)
+    gross_margin_weighted = (df['Gross Profit'].sum() / total_revenue) * 100
+
+    return round(gross_margin_weighted, 2)
+
+
+def calculate_fulfillment_breakdown(fulfilled, pending):
+    """
+    Calculates the percentage breakdown of fulfilled and pending orders.
+
+    If total (fulfilled + pending) is negative, percentages are returned as negative.
+    If total is zero, both percentages are returned as 0 to avoid division by zero.
+
+    Args:
+        fulfilled (int or float): Number of fulfilled orders.
+        pending (int or float): Number of pending orders.
 
     Returns:
-    - inventory_turnover_ratio: The computed inventory turnover ratio.
+        tuple: (fulfilled_pct, pending_pct)
     """
-    # Create a copy to avoid modifying the original DataFrame
-    df_sales = df_sales.copy()
+    total_orders = fulfilled + pending
 
-    # Ensure 'tranDate' is in datetime format
-    df_sales['tranDate'] = pd.to_datetime(df_sales['tranDate'], errors='coerce')
+    if total_orders == 0:
+        return 0.0, 0.0
 
-    # Ensure necessary columns exist in df_inventory
-    if 'quantityOnHand' not in df_inventory.columns:
-        raise ValueError("Column 'quantityOnHand' not found in df_inventory.")
+    # Base percentages
+    fulfilled_pct = (fulfilled / abs(total_orders)) * 100
+    pending_pct = (pending / abs(total_orders)) * 100
+
+    # Preserve sign if total is negative
+    if total_orders < 0:
+        fulfilled_pct *= -1
+        pending_pct *= -1
+
+    return round(fulfilled_pct, 2), round(pending_pct, 2)
+
+#%%
+#               Order Fulfillment Functions
+
+@st.cache_data
+def get_order_fulfillment(df_purchase, start, end):
+    """
+    Filter purchase orders for the selected period and compute fulfilled vs pending orders.
+    A fulfilled order has a fulfillment rate of 100%.
+    """
+    df = df_purchase.copy()
+    df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
+    df = df[(df['tranDate'] >= start) & (df['tranDate'] <= end)]
     
-    if 'averageCost' not in df_inventory.columns:
-        raise ValueError("Column 'averageCost' not found in df_inventory.")
-
-    # Ensure 'COGS' exists in df_sales_sorted
-    if 'COGS' not in df_sales.columns:
-        # Merge sales data with inventory to get 'averageCost'
-        df_sales_sorted = df_sales.merge(df_inventory[['itemGuid', 'averageCost']], 
-                                                on='itemGuid', 
-                                                how='left')
-        
-
-        # Compute COGS: Cost of Goods Sold = |qtyBilled| * averageCost
-        df_sales_sorted['COGS'] = df_sales_sorted['qtyBilled'].abs() * df_sales_sorted['averageCost']
-
-    # Filter sales orders for the selected year
-    df_sales_sorted = df_sales_sorted[df_sales_sorted['tranDate'].dt.year == selected_year]
-
-    # Compute total COGS for the selected year
-    COGS_total = df_sales_sorted['COGS'].sum()
-
-    # Compute average inventory (assuming it's calculated from the full inventory dataset)
-    avg_inventory = df_inventory['quantityOnHand'].mean()
-
-    # Calculate inventory turnover ratio
-    inventory_turnover_ratio = COGS_total / avg_inventory if avg_inventory > 0 else None
-
-    return inventory_turnover_ratio
-
-
-
-
+    # Avoid division by zero by replacing zero orders with NaN
+    df["qtyOrdered"] = df["qtyOrdered"].replace(0, np.nan)
+    df["Fulfillment Rate"] = (df["qtyReceived"] / df["qtyOrdered"]) * 100
+    df = df.dropna(subset=["Fulfillment Rate"])
+    fulfilled_orders = df[df["Fulfillment Rate"] == 100].shape[0]
+    pending_orders   = df[df["Fulfillment Rate"] < 100].shape[0]
+    return fulfilled_orders, pending_orders
+#%%
 def make_donut(pct, status):
+    
+    
+   
+    size=130
+    inner_radius=45
+    corner_radius=25
+    text_size=32
+    
+    
     
     # Choose colors based on the status
     if status == 'Fulfilled':
@@ -195,7 +293,7 @@ def make_donut(pct, status):
     
     
     # Create the donut chart
-    donut = alt.Chart(source).mark_arc(innerRadius=45, cornerRadius=25).encode(
+    donut = alt.Chart(source).mark_arc(innerRadius=inner_radius, cornerRadius=corner_radius).encode(
         theta=alt.Theta(field='Percentage', type='quantitative'),
         color=alt.Color(field='Category', type='nominal',
                         scale=alt.Scale(
@@ -203,487 +301,399 @@ def make_donut(pct, status):
                             range=[main_color, '#eeeeee']  # Use gray for the remaining part
                         ),
                         legend=None)
-    ).properties(width=130, height=130)
+    ).properties(width=size, height=size)
     
     
     # Add centered text to show the percentage value
     center_text = alt.Chart(pd.DataFrame({'text': [f"{round(pct)}%"]})).mark_text(
         align='center',
         baseline='middle',
-        fontSize=32,
+        fontSize=text_size,
         fontWeight=700,
         fontStyle="italic",
         color=main_color
     ).encode(
         text=alt.Text('text:N')
-    ).properties(width=130, height=130)
+    ).properties(width=size, height=size)
     
     return donut + center_text
-        
-        
-        
-        
-@st.cache_data       
-def get_order_fulfillment(df_purchase, year):
-    """
-    Calculate fulfillment rate and filter the DataFrame for a specific year.
-
-    Args:
-        df_purchase_orders (pd.DataFrame): Purchase orders DataFrame.
-        year (int): Year to filter data.
-
-    Returns:
-        tuple: (fulfilled_orders, pending_orders)
-    """
-    # Create a copy to avoid modifying the original DataFrame
-    df_filtered = df_purchase.copy()
-    
-    # Ensure 'tranDate' is in datetime format (only in df_filtered, not modifying original)
-    df_filtered['tranDate'] = pd.to_datetime(df_filtered['tranDate'], errors='coerce')
-    
-    # Filter for the given year
-    df_filtered = df_filtered[df_filtered['tranDate'].dt.year == year]
-
-    
-    columns = ['guid', 'itemGuid', 'tranDate', 'qtyOrdered', 'qtyReceived']
-    df_filtered = df_filtered[columns].copy()
-    
-    
-    # Replace zero qtyOrdered to avoid division errors
-    df_filtered['qtyOrdered'] = df_filtered['qtyOrdered'].replace(0, np.nan)
-
-    # Calculate Fulfillment Rate (avoid division by zero)
-    df_filtered['Fulfillment Rate'] = (df_filtered['qtyReceived'] / df_filtered['qtyOrdered']) * 100
-
-    # Drop NaN values caused by division errors (optional but recommended)
-    df_filtered = df_filtered.dropna(subset=['Fulfillment Rate'])
-
-    
-
-    # Count fulfilled and pending orders
-    fulfilled_orders = df_filtered[df_filtered['Fulfillment Rate'] == 100].shape[0]
-    pending_orders = df_filtered[df_filtered['Fulfillment Rate'] < 100].shape[0]
-
-    return fulfilled_orders, pending_orders
-        
-        
-@st.cache_data       
-def process_gross_margin(df, selected_year):
-    """
-    Filters the dataframe by the selected year and calculates the Gross Margin (%).
-    
-    Parameters:
-    - df (pd.DataFrame): The sales orders dataframe.
-    - selected_year (int): The year to filter the data.
-    
-    Returns:
-    - pd.DataFrame: The modified dataframe with Gross Margin (%) calculated and cleaned.
-    """
-    # Ensure 'tranDate' is in datetime format
-    df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
-    
-    # Filter by selected year
-    df_filtered = df[df['tranDate'].dt.year == selected_year].copy()
-    
-    
-    
-    # Merge Sales and Inventory for COGS(Compute Cost of Goods Sold) Calculation
-    df_filtered = df_filtered.merge(df_inventory[['itemGuid', 'averageCost']], on='itemGuid', how='left')
-
-    # ASSUMPTION:returns should not generate profit
-    df_filtered['COGS'] = df_filtered['qtyBilled'].abs() * df_filtered['averageCost']
-    # Compute Gross Profit
-    df_filtered['Gross Profit'] = df_filtered['amount'] - df_filtered['COGS']
-    
-    # Compute Gross Margin (%)
-    df_filtered['Gross Margin (%)'] = np.where(
-        df_filtered['amount'].abs() < 1,  # Avoid extreme values
-        np.nan,
-        np.where(
-            df_filtered['amount'] < 0,
-            (df_filtered['Gross Profit'] / df_filtered['amount'].abs()) * -100,  # Handle refunds
-            (df_filtered['Gross Profit'] / df_filtered['amount']) * 100
-        )
-    )
-    
-    # Cap outliers using winsorization
-    df_filtered['Gross Margin (%)'] = df_filtered['Gross Margin (%)'].clip(lower=-100, upper=100)
-    
-    # Fill NaN with 0
-    df_filtered['Gross Margin (%)'].fillna(0, inplace=True)
-    
-    return df_filtered
-    
-        
-        
-def plot_gross_margin(df):
-    """
-    Visualizes the Gross Margin (%) distribution using Altair.
-    
-    Parameters:
-    - df (pd.DataFrame): The dataframe containing the Gross Margin (%) column.
-    
-    Returns:
-    - Altair chart object
-    """
-    chart = alt.Chart(df).transform_density(
-        density='Gross Margin (%)',
-        as_=['Gross Margin (%)', 'density'],
-    ).mark_area(
-        opacity=0.5
-    ).encode(
-        x='Gross Margin (%):Q',
-        y='density:Q',
-        color=alt.value("#1f77b4")
-    ).properties(
-        title="",
-        width=600,
-        height=400
-    )
-    
-    return chart     
-        
-
-
-#                   Revenue Calculation
-
-@st.cache_data
-def plot_revenue_trend(df, selected_year):
-    """
-    Filters sales orders data for the selected year and plots revenue trend using Altair.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing sales orders with 'tranDate' and 'amount'.
-        selected_year (int): Year to filter data.
-
-    Returns:
-        alt.Chart: Altair line chart showing revenue trend over time.
-    """
-    
-    # Ensure 'tranDate' is in datetime format
-    df['tranDate'] = pd.to_datetime(df['tranDate'])
-    
-    # Filter data by selected year
-    df_filtered = df[df['tranDate'].dt.year == selected_year]
-    
-    # Aggregate revenue per day
-    revenue_df = df_filtered.groupby('tranDate')['amount'].sum().reset_index()
-    
-    # Create Altair line chart
-    line_chart = (
-        alt.Chart(revenue_df)
-        .mark_line(point=True)  # Add points to highlight each day's revenue
-        .encode(
-            x=alt.X('tranDate:T', title='Date', axis=alt.Axis(format='%b %d, %Y', labelAngle=-45)),  # Format x-axis
-            y=alt.Y('amount:Q', title='Revenue', scale=alt.Scale(zero=False)),  # Prevent unnecessary zero baseline
-            tooltip=['tranDate', 'amount']  # Interactive tooltip
-        )
-        .properties(title='', width=600, height=400)
-    )
-
-    return line_chart
-
-        
 
 
 
-def top10_products_by_category(sales_df, product_df, selected_year):
-    """
-    Find the top 10 products by sales within each product category for a given year.
-    
-    Args:
-        sales_df (pd.DataFrame): Sales orders DataFrame (e.g., dfs[3]) that contains 'itemGuid', 'amount', and 'tranDate'.
-        product_df (pd.DataFrame): Product DataFrame (e.g., dfs[1]) that contains product details,
-                                   including 'guid' and 'itemCategory'.
-        selected_year (int): Year to filter the data.
-                                   
-    Returns:
-        pd.DataFrame: A DataFrame with the top 10 products by total sales for each product category.
-    """
-    # Ensure 'tranDate' is in datetime format
-    sales_df['tranDate'] = pd.to_datetime(sales_df['tranDate'])
+#%%
 
-    # Filter sales data for the selected year
-    sales_filtered = sales_df[sales_df['tranDate'].dt.year == selected_year]
-
-    # Merge sales orders with product details
-    product_cols = ['guid', 'itemCategory']  # Add more columns if needed
-    merged_df = sales_filtered.merge(product_df[product_cols], left_on='itemGuid', right_on='guid', how='left')
-    
-    # Group by product and category, summing the sales amount
-    grouped = merged_df.groupby(['itemCategory', 'itemGuid'], as_index=False)['amount'].sum()
-    
-    # Get the top 10 products for each category sorted by sales amount
-    top10 = grouped.groupby('itemCategory', group_keys=False).apply(lambda x: x.nlargest(10, 'amount'))
-    
-    # Sort results by category and descending amount
-    top10 = top10.sort_values(['itemCategory', 'amount'], ascending=[True, False]).head(10)
-    
-    return top10
+def display_metric(string, value):
+    with st.container(border=True):
+        st.metric(string, format_number(value),
+                  delta=f"{format_number(delta_rev)} ({delta_rev_pct:+.2f}%)")
+            
 
 #%%
 
 
-@st.cache_data
-def calculate_total_revenue(dfs, selected_year):
-    """
-    Filters specified DataFrames by year and calculates the total revenue.
-
-    Parameters:
-    dfs (list): List of DataFrames.
-    selected_year (int): The year to filter by.
-
-    Returns:
-    float: Total revenue for the selected year across dfs[3], dfs[7], dfs[11].
-    """
-    total_revenue = 0
-    # indices_to_use = [3, 7, 11]
-
-    # for idx in indices_to_use:
-    #     df = dfs[idx].copy()
-        
-    #     # Ensure datetime format
-    #     df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
-        
-    #     # Filter by year
-    #     df_filtered = df[df['tranDate'].dt.year == selected_year]
-        
-    #     # Sum up revenue
-    #     revenue_sum = df_filtered['amount'].sum(skipna=True)
-    #     total_revenue += revenue_sum
-    
-    # calculation for one store
-    df = dfs.copy()
-    # Ensure datetime format
-    df['tranDate'] = pd.to_datetime(df['tranDate'], errors='coerce')
-    
-    # Filter by year
-    df_filtered = df[df['tranDate'].dt.year == selected_year]
-    
-    # Sum up revenue
-    revenue_sum = df_filtered['amount'].sum(skipna=True)
-    total_revenue += revenue_sum
-    
-    
-
-    return total_revenue
-
-
-        
-        
-        
-
+def top10_products(sales_df, prod_df):
+        sales_df['tranDate'] = pd.to_datetime(sales_df['tranDate'])
+        merged = sales_df.merge(prod_df[['guid', 'itemCategory']], left_on='itemGuid', right_on='guid', how='left')
+        grouped = merged.groupby(['itemCategory', 'itemGuid'], as_index=False)['amount'].sum()
+        top10 = grouped.sort_values("amount", ascending=False).head(10)
+        return top10
 
 #%%
 
 # =============================================================================
 # #                 Main Page Display(App layout)
 # =============================================================================
-# st.title("📊 Filtered Sales Orders")
 
-# spacing of the columns respectively
-col = st.columns((1.5, 4.5, 2), gap='medium')
-
-
-
-with col[0]:
+#%%
+with st.sidebar:
+    st.title('💻 High-Level Dashboard')
+    st.header("⚙️ Settings")
     
-
-    st.markdown("#### <u>KPI</u>", unsafe_allow_html=True)
-      
     
-    st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-       
-    total = calculate_total_revenue(df_sales_orders, selected_year)
+    # # Store selection
+    # store_list = ['A', 'G', 'J']
+    # selected_store = st.selectbox('Select a store', store_list)
     
-    if total is None or total < 0:
-        total_display = '-'  # Prevent errors
-        
-    elif selected_year > 2021:
-        total_display = format_number(total)
-        
+    
+    # Select view mode: Combined or individual store
+    view_mode = st.radio("Select view mode", options=["All Stores", "Individual Store"])
+    if view_mode == "Individual Store":
+        selected_store = st.selectbox("Select a store", options=list(store_map.keys()))
     else:
-        total_display = '-'
-
-    
-    st.metric(label="Total Revenue", value=total_display, delta=None )
-
-
-
-
-
-
-    st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-
-    
-    
-    inventory_TO = calculate_inventory_turnover(df_selected_sorted, df_inventory, selected_year)
-    
-    if inventory_TO is None or inventory_TO < 0:
-        turnover_ratio = '-'  # Prevent errors
-        
-    elif selected_year > 2021:
-        turnover_ratio = format_number(inventory_TO)
-        
-    else:
-        turnover_ratio = '-'
-
-    
-    st.metric(label="Inventory Turnover", value=turnover_ratio, delta=None )
-
-
-
-    st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-
-
-    #st.markdown('#### Fulfillment Rate')
-    # Calculate fulfillment rate as a new column without modifying the original df_sales_orders in place.
-    df_purchase_orders['Fulfillment Rate'] = (df_purchase_orders['qtyReceived'] / df_purchase_orders['qtyOrdered']) * 100
-    
-    
-    
-    if selected_year > 2021:   
-
-        # Calculate fulfilled and unfulfilled orders
-        # fulfilled_orders = df_purchase_orders[df_purchase_orders['Fulfillment Rate'] == 100].shape[0]
-        # pending_orders = df_purchase_orders[df_purchase_orders['Fulfillment Rate'] < 100].shape[0]
-        # total_orders = fulfilled_orders + pending_orders
-        
-        fulfilled_orders, pending_orders = get_order_fulfillment(df_purchase_orders, selected_year)
-        total_orders = fulfilled_orders + pending_orders
-        
-    
-        
-        # Calculate percentages (ensure total_orders > 0)
-        fulfilled_pct = (fulfilled_orders / total_orders) * 100 if total_orders > 0 else 0
-        pending_pct   = (pending_orders / total_orders) * 100 if total_orders > 0 else 0
-    
-        
-        # Create two donut charts
-        donut_chart_fulfilled_pct = make_donut(fulfilled_pct, 'Fulfilled')
-        donut_chart_pending_pct   = make_donut(pending_pct, 'Pending')
-        
-    else:
-        fulfilled_pct = 0
-        pending_pct = 0
-        donut_chart_fulfilled_pct = make_donut(fulfilled_pct, 'Fulfilled')
-        donut_chart_pending_pct   = make_donut(pending_pct, 'Pending')
+        selected_store = "All"
         
         
     
-    fulfillment_col = st.columns((0.2, 1, 0.2))
-    st.write('Inbound Fulfilled Orders')
-    st.altair_chart(donut_chart_fulfilled_pct)
-    st.write('Inbound Pending Orders')
-    st.altair_chart(donut_chart_pending_pct)
-        
+    # Get the global date range across all sales CSVs (indices 3, 7, 11 for sales)
+    def get_global_date_range(dfs):
+        dates = []
+        for idx in [3, 7, 11]:
+            df_temp = dfs[idx].copy()
+            df_temp['tranDate'] = pd.to_datetime(df_temp['tranDate'], errors='coerce')
+            dates += list(df_temp['tranDate'].dropna())
+        return min(dates), max(dates)
+    
+    global_start, global_end = get_global_date_range(dfs)
+    
+    
+    # Date range selector
+    # date_range = st.date_input("Select Date Range",
+    #                            value=(global_start, global_end),
+    #                            min_value=global_start,
+    #                            max_value=global_end)
+    
+    # start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+    
+    
+    default_start_date = global_end - timedelta(days=365)  # Show a year by default
+    default_end_date = global_end
+    start = st.date_input("Start date", default_start_date, min_value=global_start, max_value=global_end)
+    end = st.date_input("End date", default_end_date, min_value=global_start, max_value=global_end)
+    start_date = pd.to_datetime(start)
+    end_date = pd.to_datetime(end)
+    
+    
+    
+    # Time frame and chart type selection
+    time_frame = st.selectbox("Select time frame", ("Daily", "Weekly", "Monthly", "Quarterly"))
+    #chart_type = st.selectbox("Select a chart type", ("Bar", "Area"))
+    
+    
+    # For delta computation: define a previous period with the same duration
+    period_delta = end_date - start_date # duration of the current period
+    prev_start = start_date - period_delta - timedelta(days=1) # Compute the previous period of the same duration
+    prev_end = start_date - timedelta(days=1)
+    st.markdown(f"**Comparison Period:**<br>{prev_start} to {prev_end}", unsafe_allow_html=True)
+
+    
+    
+    
+#%%
+    
+df_inventory, df_products, df_purchase, df_sales = get_store_data(dfs, selected_store) 
+    
+# Filter sales data to current period and previous period for delta
+sales_current = filter_sales(df_sales, start_date, end_date)
+sales_prev = filter_sales(df_sales, prev_start, prev_end)
+orders_current = filter_sales(df_purchase, start_date, end_date)
+    
+
+# Get aggregated view based on time frame
+if time_frame == 'Daily':
+    sales_current_disp = get_daily_data(sales_current)
+    sales_prev_disp = get_daily_data(sales_prev)
+elif time_frame == 'Weekly':
+    sales_current_disp = get_weekly_data(sales_current)
+    sales_prev_disp = get_weekly_data(sales_prev)
+elif time_frame == 'Monthly':
+    sales_current_disp = get_monthly_data(sales_current)
+    sales_prev_disp = get_monthly_data(sales_prev)
+elif time_frame == 'Quarterly':
+    sales_current_disp = get_quarterly_data(sales_current)
+    sales_prev_disp = get_quarterly_data(sales_prev)
+    
+#%%
+
+# Fulfillment Metrics & Donut Charts for Orders
+fulfilled, pending = get_order_fulfillment(df_purchase, start_date, end_date)
+fulfilled_pct, pending_pct =  calculate_fulfillment_breakdown(fulfilled, pending)
+donut_chart_fulfilled = make_donut(fulfilled_pct, 'Fulfilled')
+donut_chart_pending   = make_donut(pending_pct, 'Pending')
     
     
 
 #%%
 
-with col[1]:
-    st.markdown(f"<h4 style='text-align: center;'>Gross Margin Distribution {selected_year}</h4>", unsafe_allow_html=True)
+
+#               Sales Comparison Chart Across Stores
+# Combined Metrics (for both Combined and Individual views)
+if selected_store == "All" or view_mode == "Combined All Stores":
+    st.markdown("## All Stores Metrics")
     
-#     st.write(f"Data for Store **{selected_store}** and Year **{selected_year}**")
-#     df = pd.to_datetime(df_purchase_orders['tranDate'])
-#     df = df[df['tranDate'].dt.year == selected_year]
-#     st.dataframe(df)  # Display the sorted DataFrame
+    total_rev_current = calculate_total_revenue(sales_current)
+    total_rev_prev = calculate_total_revenue(sales_prev)
+    delta_rev, delta_rev_pct = compute_delta(pd.DataFrame({"amount": [total_rev_prev, total_rev_current]}), "amount")
     
-    if selected_year > 2021:  
-        df_margin = process_gross_margin(df_selected_sorted, selected_year)
-        margin_distr = plot_gross_margin(df_margin)
-        revenue_plot = plot_revenue_trend(df_selected_sorted, selected_year)
+    inv_turnover_current = calculate_inventory_turnover(sales_current, df_inventory)
+    inv_turnover_prev = calculate_inventory_turnover(sales_prev, df_inventory)
+    delta_inv_df = pd.DataFrame({"inv_turnover": [inv_turnover_prev, inv_turnover_current]}) # temp df
+    delta_inv, delta_inv_pct = compute_delta(delta_inv_df, "inv_turnover")
+    
+    avg_gross_margin_current = process_gross_margin(sales_current, df_inventory)
+    avg_gross_margin_prev = process_gross_margin(sales_prev, df_inventory)
+    delta_gm_df = pd.DataFrame({"gross_margin": [avg_gross_margin_prev, avg_gross_margin_current]}) # temp df
+    delta_gm, _ = compute_delta(delta_gm_df, "gross_margin")
+    
+    top10_df = top10_products(sales_current, df_products)
+    
+    
+    
+    
+    kpi_cols = st.columns(3)
+    with kpi_cols[0]:
+        with st.container(border=True):
+            st.metric("Total Revenue", format_number(total_rev_current),
+                      delta=f"{format_number(delta_rev)} ({delta_rev_pct:+.2f}%)")
+    with kpi_cols[1]:
+        with st.container(border=True):
+            st.metric("Inventory Turnover", format_number(inv_turnover_current),
+                      delta=f"{format_number(delta_inv)} ({delta_inv_pct:+.2f}%)")
+    
+    with kpi_cols[2]:
+        with st.container(border=True):
+            st.metric("Avg Gross Margin (%)", f"{avg_gross_margin_current:.1f}%",
+                      delta=f"{delta_gm:+.1f}%")
+    
+    
+    
+    orders_kpi_cols = st.columns(2)
+    with orders_kpi_cols[0]:
+        with st.container(border=True):
+            st.markdown("**Inbound Fulfilled Orders**")
+            st.altair_chart(donut_chart_fulfilled, use_container_width=True)
+            
+    with orders_kpi_cols[1]:
+        with st.container(border=True):
+            st.markdown("**Inbound Pending Orders**")
+            st.altair_chart(donut_chart_pending, use_container_width=True)
+            
+          
+    
+    with st.expander('Top Products', expanded=True):
+        #st.markdown("**Top Products**")
         
-    else:
-        st.error("Please select a valid year from the list in the sidebar.")
-
-    
-    st.altair_chart(margin_distr, use_container_width=True)
-    st.markdown(f"<h4 style='text-align: center;'>Revenue Trend {selected_year}</h4>", unsafe_allow_html=True)
-    st.altair_chart(revenue_plot, use_container_width=True)
-    
-    
-    
-
-
-with col[2]:
-    st.markdown('#### Top 10 Products')
-    
-    if selected_year > 2021:  
-        top10_df = top10_products_by_category(dfs[3], dfs[1], selected_year)
-    
-    else:
-        st.error("Please select a valid year from the list in the sidebar.")
-    
-    
-    
-
-    # Display the dataframe in Streamlit
-    st.dataframe(top10_df,
-                 column_order=("itemCategory", "itemGuid", "amount"),
-                 hide_index=True,
-                 width=None,
-                 column_config={
-                    "itemCategory": st.column_config.TextColumn(
-                        "Product Category",
-                    ),
-                    "itemGuid": st.column_config.TextColumn(
-                        "Product ID",
-                    ),
-                    "amount": st.column_config.ProgressColumn(
-                        "Total Sales Amount",
-                        format="%.2f",
-                        min_value=0,
-                        max_value=max(top10_df.amount) if not top10_df.empty else 1,  # Avoid division by zero
-                     )} 
-                 )
-
-    st.markdown("<h4 style='text-align: center;'><u>More Information</u></h4>", unsafe_allow_html=True)
-    
-    with st.expander('About', expanded=True):
-        st.write('''
-            - Data: Sales and product data merged based on `Product Key`.
-            - :orange[**Top Products**]: Displays the **top 10 best-selling products per category** for the selected year.
-            - :orange[**Sales Performance**]: Measured in **total sales amount** per product.
-            - :orange[**Filtering**]: Data is filtered for the **selected year**.
-        ''')
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
         
+        # Display the dataframe in Streamlit
+        st.dataframe(top10_df,
+                     column_order=("itemCategory", "itemGuid", "amount"),
+                     hide_index=True,
+                     width=None,
+                     column_config={
+                        "itemCategory": st.column_config.TextColumn(
+                            "Product Category",
+                        ),
+                        "itemGuid": st.column_config.TextColumn(
+                            "Product ID",
+                        ),
+                        "amount": st.column_config.ProgressColumn(
+                            "Total Sales Amount",
+                            format="%.2f",
+                            min_value=0,
+                            max_value=max(top10_df.amount) if not top10_df.empty else 1,  # Avoid division by zero
+                         )} 
+                     )
+    
+    st.markdown("#### Sales Comparison Across Stores")
+        
+    with st.container(border=True):
+
+        chart_data = pd.DataFrame()
+        for s in store_map.keys():
+            _, _, _, sales_temp = get_store_data(dfs, s)
+            temp = filter_sales(sales_temp, start_date, end_date).copy()
+            temp["Store"] = s
+            chart_data = pd.concat([chart_data, temp], ignore_index=True)
+        
+        chart_data['tranDate'] = pd.to_datetime(chart_data['tranDate'], errors='coerce')
+        
+        # Aggregate total amount by store
+        store_sales = chart_data.groupby("Store")["amount"].sum().reset_index()
+        
+        # Create bar chart
+        sales_chart = alt.Chart(store_sales).mark_bar().encode(
+            x=alt.X('Store:N', title='Store', axis=alt.Axis(labelAngle=0)),
+            y=alt.Y('amount:Q', title='Total Revenue'),
+            color='Store:N',
+            tooltip=['Store', 'amount']
+        ).properties(width=600, height=200)
+        
+        text = sales_chart.mark_text(
+            align='center',
+            baseline='bottom',
+            dy=-5  # offset
+        ).encode(
+            text=alt.Text('amount:Q', format='.2s')
+        )
+        
+        final_sales_chart = sales_chart + text
+        
+        st.altair_chart(final_sales_chart, use_container_width=True)
+
+
+    
+    
+    
+#%%  
+    
+#st.markdown('<hr style="border: 1px solid #999;">', unsafe_allow_html=True)
+
+#               Store Level Dashboard (if Individual Store)
+
+if view_mode == "Individual Store":
+    st.markdown(f"## Dashboard for Store {selected_store}")
+
+    total_rev_store = calculate_total_revenue(sales_current)
+    total_rev_prev_store = calculate_total_revenue(sales_prev)
+    delta_store_df = pd.DataFrame({"amount": [total_rev_prev_store, total_rev_store]})
+    delta_store, delta_store_pct = compute_delta(delta_store_df , "amount")
+    
+    inv_turnover_store = calculate_inventory_turnover(sales_current, df_inventory)
+    inv_turnover_store_prev = calculate_inventory_turnover(sales_prev, df_inventory)
+    delta_store_inv_df = pd.DataFrame({"inv_store_turnover": [inv_turnover_store_prev, inv_turnover_store]}) # temp df
+    delta_store_inv, delta_store_inv_pct = compute_delta(delta_store_inv_df, "inv_store_turnover")
+    
+    
+    avg_gross_margin_store = process_gross_margin(sales_current, df_inventory)
+    avg_gross_margin_store_prev = process_gross_margin(sales_prev, df_inventory)
+    delta_gm_store_df = pd.DataFrame({"gross_margin": [avg_gross_margin_store_prev, avg_gross_margin_store]}) # temp df
+    delta_store_gm, _ = compute_delta(delta_gm_store_df, "gross_margin")
+    
+    top10_store = top10_products(sales_current, df_products)
+
+    # 1st Row
+    store_cols = st.columns(3)
+    with store_cols[0]:
+        with st.container(border=True):
+            st.metric("Total Revenue", format_number(total_rev_store),
+                          delta=f"{format_number(delta_store)} ({delta_store_pct:+.2f}%)")
+            
+    
+    with store_cols[1]:
+        with st.container(border=True):
+            st.metric("Inventory Turnover", format_number(inv_turnover_store),
+                      delta=f"{format_number(delta_store_inv)} ({delta_store_inv_pct:+.2f}%)")
+            
+    
+    with store_cols[2]:
+        with st.container(border=True):
+            st.metric("Avg Gross Margin (%)", f"{avg_gross_margin_store:.1f}%",
+                      delta=f"{delta_store_gm:+.1f}%")
+            
+    # 2nd Row
+    store_orders_col = st.columns(2)
+    with store_orders_col[0]:
+        with st.container(border=True):
+            st.markdown("**Inbound Fulfilled Orders**")
+            st.altair_chart(donut_chart_fulfilled, use_container_width=True)
+            
+    with store_orders_col[1]:
+        with st.container(border=True):
+            st.markdown("**Inbound Pending Orders**")
+            st.altair_chart(donut_chart_pending, use_container_width=True)
+            
+            
+            
+    # 3rd Row
+    with st.expander('Top Products', expanded=True):# Display the dataframe in Streamlit
+        st.dataframe(top10_store,
+                     column_order=("itemCategory", "itemGuid", "amount"),
+                     hide_index=True,
+                     width=None,
+                     column_config={
+                        "itemCategory": st.column_config.TextColumn(
+                            "Product Category",
+                        ),
+                        "itemGuid": st.column_config.TextColumn(
+                            "Product ID",
+                        ),
+                        "amount": st.column_config.ProgressColumn(
+                            "Total Sales Amount",
+                            format="%.2f",
+                            min_value=0,
+                            max_value=max(top10_store.amount) if not top10_store.empty else 1,  # Avoid division by zero
+                         )} 
+                     )
+    
+    
+    
+    
+    st.markdown("### Sales Trend")
+    with st.container(border=True):
+        sales_trend = sales_current_disp.groupby(sales_current_disp.index)["amount"].sum().reset_index()
+        trend_chart = alt.Chart(sales_trend).mark_line(point=True).encode(
+            x=alt.X('tranDate:T', title='Date', axis=alt.Axis(format='%b %d', labelAngle=-45)),
+            y=alt.Y('amount:Q', title='Revenue'),
+            tooltip=['tranDate', 'amount']
+        ).properties(width=800, height=400)
+        st.altair_chart(trend_chart, use_container_width=True)
+    
+    
+    
+    st.markdown('<hr style="border: 1px solid #999;">', unsafe_allow_html=True)
+    
+    
+    
+    # DataFrame Info display for associated CSV files
+    st.markdown("### Detailed Data Overview")
+    with st.expander("View DataFrame Info for the store files"):
+        for label, df_temp in zip(["Inventory", "Products", "Purchase Orders", "Sales Orders"],
+                                  [df_inventory, df_products, df_purchase, df_sales]):
+            st.write(f"**{label}**")
+            
+            # Use StringIO buffer to capture df.info()
+            buffer = io.StringIO()
+            df_temp.info(buf=buffer)
+            info_str = buffer.getvalue()
+            
+            
+            
+            st.text(info_str)
+            st.markdown("---")
     
 
+#%%
+
+# DataFrame display for selected time frame
+st.subheader("DataFrame: Selected Duration")       
 
 
-
-
-
-
+df_display = sales_current_disp.copy()   
+    
+st.dataframe(df_display)   
+    
+    
+            
+#%%
 
 
 

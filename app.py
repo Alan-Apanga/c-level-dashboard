@@ -684,13 +684,11 @@ if view_mode == "Individual Store":
 #%%
 
 # DataFrame display for selected time frame
-st.subheader("DataFrame: Selected Duration")       
+with st.expander('Data: Selected Duration', expanded=True):
 
-
-df_display = sales_current_disp.copy()   
-    
-st.dataframe(df_display)   
-    
+    df_display = sales_current_disp.copy()      
+    st.dataframe(df_display)   
+        
     
             
 #%%

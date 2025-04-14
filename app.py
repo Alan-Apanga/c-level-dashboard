@@ -664,21 +664,21 @@ if view_mode == "Individual Store":
     
     
     # DataFrame Info display for associated CSV files
-    st.markdown("### Detailed Data Overview")
-    with st.expander("View DataFrame Info for the store files"):
-        for label, df_temp in zip(["Inventory", "Products", "Purchase Orders", "Sales Orders"],
-                                  [df_inventory, df_products, df_purchase, df_sales]):
-            st.write(f"**{label}**")
+    # st.markdown("### Detailed Data Overview")
+    # with st.expander("View DataFrame Info for the store files"):
+    #     for label, df_temp in zip(["Inventory", "Products", "Purchase Orders", "Sales Orders"],
+    #                               [df_inventory, df_products, df_purchase, df_sales]):
+    #         st.write(f"**{label}**")
             
-            # Use StringIO buffer to capture df.info()
-            buffer = io.StringIO()
-            df_temp.info(buf=buffer)
-            info_str = buffer.getvalue()
+    #         # Use StringIO buffer to capture df.info()
+    #         buffer = io.StringIO()
+    #         df_temp.info(buf=buffer)
+    #         info_str = buffer.getvalue()
             
             
             
-            st.text(info_str)
-            st.markdown("---")
+    #         st.text(info_str)
+    #         st.markdown("---")
     
 
 #%%

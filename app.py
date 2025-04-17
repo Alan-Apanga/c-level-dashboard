@@ -11,7 +11,7 @@ import glob
 import streamlit as st
 import altair as alt
 from datetime import timedelta
-import io
+
 
 
 
@@ -335,6 +335,7 @@ def top10_products(sales_df, prod_df):
         sales_df['tranDate'] = pd.to_datetime(sales_df['tranDate'])
         merged = sales_df.merge(prod_df[['guid', 'itemCategory']], left_on='itemGuid', right_on='guid', how='left')
         grouped = merged.groupby(['itemCategory', 'itemGuid'], as_index=False)['amount'].sum()
+        grouped['itemGuid'] = grouped['itemGuid'].astype(str)
         top10 = grouped.sort_values("amount", ascending=False).head(10)
         return top10
 
@@ -415,7 +416,8 @@ df_inventory, df_products, df_purchase, df_sales = get_store_data(dfs, selected_
 # Filter sales data to current period and previous period for delta
 sales_current = filter_sales(df_sales, start_date, end_date)
 sales_prev = filter_sales(df_sales, prev_start, prev_end)
-orders_current = filter_sales(df_purchase, start_date, end_date)
+
+#orders_current = filter_sales(df_purchase, start_date, end_date)
     
 
 # Get aggregated view based on time frame
